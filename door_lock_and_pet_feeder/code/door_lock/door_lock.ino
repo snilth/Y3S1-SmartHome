@@ -46,6 +46,8 @@ void setup() {
   servoLock.write(0);  // lock position
   pinMode(buzzerLock, OUTPUT);
 
+  // --- Serial for Odroid ---
+  Serial.begin(9600);   // ใช้ UART ผ่าน USB
 }
 
 void loop() {
@@ -69,11 +71,15 @@ void loop() {
       delay(800);               
       digitalWrite(buzzerLock, LOW);
 
-      servoLock.write(90);
+      servoLock.write(90);   // unlock
       delay(5000);
-      servoLock.write(0);
+      servoLock.write(0);    // lock back
     } else {
       lcd.print("Incorrect!");
+      
+      // --- แจ้ง Odroid ผ่าน Serial ---
+      Serial.println("WRONG_PASS");
+
       // --- Buzzer error sound ---
       for (int i = 0; i < 2; i++) {   
         digitalWrite(buzzerLock, HIGH);
