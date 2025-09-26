@@ -19,10 +19,10 @@ const int ECHO_PIN = 12;   // D6 GPIO12 (ผ่านตัวแบ่ง 5V->3
 /*** Servo ***/
 const int SERVO_PIN = 13;  // D7 GPIO13
 Servo foodServo;
-const uint32_t SERVO_PULSE_MS   = 600;    // เปิดค้าง 1000 ms
+const uint32_t SERVO_PULSE_MS   = 500;    // เปิดค้าง 1000 ms
 const uint32_t SERVO_LOCKOUT_MS = 200;    // กันสั่งถี่ 200 ms
 int SERVO_CLOSED_US = 700;                // ปรับตามกลไกจริง
-int SERVO_OPEN_US   = 2450;
+int SERVO_OPEN_US   = 2000;
 
 bool     servoBusy        = false;
 uint32_t servoActionStart = 0;
@@ -46,7 +46,7 @@ bool rgbPower=true;
    - Active-LOW (LOW=ติด, HIGH=ดับ) ให้ตั้ง true (เหมาะกับ D4 ที่มักเป็น LED บนบอร์ด)
    - Active-HIGH (HIGH=ติด, LOW=ดับ) ให้ตั้ง false (ถ้าใช้ LED ภายนอกต่อแบบธรรมดา)
 */
-const bool LED_ACTIVE_LOW = true;   // <<< ปรับตรงนี้ให้ตรงกับการต่อจริง
+const bool LED_ACTIVE_LOW = false;   // <<< ปรับตรงนี้ให้ตรงกับการต่อจริง
 inline void ledWrite(uint8_t pin, bool on) {
   if (LED_ACTIVE_LOW)  digitalWrite(pin, on ? LOW  : HIGH);
   else                 digitalWrite(pin, on ? HIGH : LOW);
@@ -65,7 +65,7 @@ const uint32_t PRINT_EVERY_MS  = 1000;
 
 /*** MQ-2 thresholds (A0: 0..1023) ***/
 int MQ2_ORANGE_RAW = 100;   // ค่าเริ่มต้นจากสเก็ตช์ทดสอบ
-int MQ2_RED_RAW    = 900;
+int MQ2_RED_RAW    = 400;
 int MQ2_HYST_RAW   = 40;
 const uint32_t MQ2_SAMPLE_MS            = 500;
 const uint32_t SMOKE_ALERT_COOLDOWN_MS  = 15000;

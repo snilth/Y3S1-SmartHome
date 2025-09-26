@@ -1,134 +1,58 @@
-// ===== RGB with Button (debounce) + PIR smooth =====
-#define LED_R 9
-#define LED_G 10
-#define LED_B 11
-#define BTN   7
+/***** MQ-2 + LEDs Test (ESP8266) *****/
+#define MQ2_AO           A0   // Analog input
+#define LED_SMOKE_AMBER  0    // D3
+#define LED_SMOKE_RED    2    // D4
 
-#define LED_PIR 3
-#define PIR     6
+// ปรับตรงนี้ให้ตรงกับการต่อจริง
+const bool LED_AMBER_ACTIVE_LOW = false;   // ถ้าเป็น LED ภายนอกธรรมดา → false
+const bool LED_RED_ACTIVE_LOW   = false;   // ถ้าใช้ D4 on-board LED → true
 
-const bool COMMON_ANODE = false;
+// ค่า threshold คร่าว ๆ (ต้องปรับเองจากการทดลอง)
+int MQ2_ORANGE_RAW = 200;   // เริ่มมีควัน
+int MQ2_RED_RAW    = 600;   // ควันเยอะ
+int MQ2_HYST_RAW   = 40;    // hysteresis กันไฟกระพริบ
 
-// ---- Debounce BTN ----
-unsigned long lastDebounceTime = 0;
-const unsigned long DEBOUNCE_MS = 50;
-int lastReading = HIGH;
-int stableState = HIGH;
+uint8_t lastSmokeLevel = 0;  // 0=OK, 1=AMBER, 2=RED
 
-// ---- RGB colors ----
-struct RGB { uint8_t r,g,b; };
-RGB COLORS[] = {
-  {0,0,0},{255,0,0},{0,255,0},{0,0,255},
-  {255,255,0},{0,255,255},{255,0,255},{255,255,255},
-  {255,128,0},{128,0,255},{255,64,64},{0,128,64}
-};
-const uint8_t NUM_COLORS = sizeof(COLORS)/sizeof(COLORS[0]);
-uint8_t idx = 0;
-
-inline void setColor(uint8_t r, uint8_t g, uint8_t b) {
-  if (COMMON_ANODE) { r = 255-r; g = 255-g; b = 255-b; }                                                                    
-  analogWrite(LED_R, r);
-  analogWrite(LED_G, g);
-  analogWrite(LED_B, b);
+inline void ledWrite(uint8_t pin, bool on, bool activeLow){
+  if(activeLow) digitalWrite(pin, on ? LOW : HIGH);
+  else          digitalWrite(pin, on ? HIGH : LOW);
 }
-void showIdx(){ setColor(COLORS[idx].r, COLORS[idx].g, COLORS[idx].b); }
-void nextColor(){ idx=(idx+1)%NUM_COLORS; showIdx(); }
-
-// ---- PIR control ----
-const unsigned long LED_PIR_HOLD_MS = 5000;
-unsigned long lastMotionMs = 0;
-bool ledPirOn = false;
-
-// ===== MQ-2 + LEDs + Buzzer =====
-#define BUZZER_PIN  13
-
-#define GAS_LED1  2
-#define GAS_LED2  4
-#define GAS_LED3  5
-#define GAS_LED4  8
-#define GAS_LED5  12   
-#define PIN_GAS   A3   // MQ-2 AO
 
 void setup() {
-  // RGB + PIR
-  pinMode(LED_R, OUTPUT);
-  pinMode(LED_G, OUTPUT);
-  pinMode(LED_B, OUTPUT);
-  pinMode(BTN, INPUT_PULLUP);
+  pinMode(LED_SMOKE_AMBER, OUTPUT);
+  pinMode(LED_SMOKE_RED, OUTPUT);
 
-  pinMode(LED_PIR, OUTPUT);
-  pinMode(PIR, INPUT);
-
-  showIdx();
-  digitalWrite(LED_PIR, LOW);
-
-  // Gas LEDs + buzzer
-  pinMode(GAS_LED1, OUTPUT);
-  pinMode(GAS_LED2, OUTPUT);
-  pinMode(GAS_LED3, OUTPUT);
-  pinMode(GAS_LED4, OUTPUT);
-  pinMode(GAS_LED5, OUTPUT);
-  pinMode(BUZZER_PIN, OUTPUT);
-
-  Serial.begin(9600);
+  Serial.begin(115200);
+  delay(200);
+  Serial.println("\n=== MQ-2 Smoke Test Start ===");
+  Serial.println("Warm-up sensor ~30s...");
 }
 
 void loop() {
-  // === Button RGB ===
-  int reading = digitalRead(BTN);
-  if (reading != lastReading) {
-    lastDebounceTime = millis();
-  }
-  if (millis() - lastDebounceTime > DEBOUNCE_MS) {
-    if (reading != stableState) {
-      stableState = reading;
-      if (stableState == LOW) {
-        nextColor();
-      }
+  static uint32_t lastSample = 0;
+  uint32_t now = millis();
+
+  if(now - lastSample >= 500){   // อ่านทุก 0.5s
+    lastSample = now;
+
+    int raw = analogRead(MQ2_AO);   // 0..1023
+    uint8_t lvl = lastSmokeLevel;
+
+    // hysteresis เล็กน้อย
+    if      (lvl == 0) { if(raw >= MQ2_RED_RAW) lvl = 2; else if(raw >= MQ2_ORANGE_RAW) lvl = 1; }
+    else if (lvl == 1) { if(raw >= MQ2_RED_RAW) lvl = 2; else if(raw <= MQ2_ORANGE_RAW - MQ2_HYST_RAW) lvl = 0; }
+    else /*2*/        { if(raw <= MQ2_RED_RAW - MQ2_HYST_RAW) lvl = 1; }
+
+    if(lvl != lastSmokeLevel){
+      lastSmokeLevel = lvl;
+      if(lvl == 0) Serial.printf("Smoke=OK    raw=%d\n", raw);
+      if(lvl == 1) Serial.printf("Smoke=AMBER raw=%d\n", raw);
+      if(lvl == 2) Serial.printf("Smoke=RED   raw=%d\n", raw);
     }
+
+    // อัปเดต LED
+    ledWrite(LED_SMOKE_AMBER, (lvl >= 1), LED_AMBER_ACTIVE_LOW);
+    ledWrite(LED_SMOKE_RED,   (lvl >= 2), LED_RED_ACTIVE_LOW);
   }
-  lastReading = reading;
-
-  // === PIR LED ===
-  unsigned long now = millis();
-  int pirState = digitalRead(PIR);
-
-  if (pirState == HIGH) {
-    ledPirOn = true;
-    lastMotionMs = now;
-    digitalWrite(LED_PIR, HIGH);
-  } else {
-    if (ledPirOn && (now - lastMotionMs >= LED_PIR_HOLD_MS)) {
-      ledPirOn = false;
-      digitalWrite(LED_PIR, LOW);
-    }
-  }
-
-  // === MQ-2 Gas Sensor ===
-  int sensorValue = analogRead(PIN_GAS);
-  int value = map(sensorValue, 300, 1000, 0, 100);
-  if (value < 0) value = 0;
-  if (value > 100) value = 100;
-
-  // Gas level LEDs
-  digitalWrite(GAS_LED1, HIGH);
-  digitalWrite(GAS_LED2, value >= 20 ? HIGH : LOW);
-  digitalWrite(GAS_LED3, value >= 40 ? HIGH : LOW);
-  digitalWrite(GAS_LED4, value >= 60 ? HIGH : LOW);
-  digitalWrite(GAS_LED5, value >= 80 ? HIGH : LOW);
-
-  // Buzzer
-  if (value >= 50) {
-    int frequency = map(value, 0, 100, 1500, 2500);
-    tone(BUZZER_PIN, frequency, 250);
-  } else {
-    noTone(BUZZER_PIN);
-  }
-
-  Serial.print("Gas raw = ");
-  Serial.print(sensorValue);
-  Serial.print("  % = ");
-  Serial.println(value);
-
-  delay(100);
 }
