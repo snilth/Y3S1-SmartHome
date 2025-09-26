@@ -1,15 +1,25 @@
+#define BLYNK_TEMPLATE_ID "TMPL6CQA_FLZL"
+#define BLYNK_TEMPLATE_NAME "SmartHome"
+#define BLYNK_AUTH_TOKEN    "pCRjqSzxGIpAvDxbAtfKaiGGEpf8MU5T"
+
+#include <ESP8266WiFi.h>
+#include <BlynkSimpleEsp8266.h>
+
+// Wi-Fi
+char ssid[] = "iPhone k";
+char pass[] = "Khim.2005";
+
 // ===== RGB (many colors) with Debounce & Start-Off =====
 // โปรแกรมนี้ควบคุม LED RGB ด้วยปุ่มกด 1 ปุ่ม
 // กดแต่ละครั้งจะเปลี่ยนสีตามลำดับ (รวมถึงสถานะ "ดับ")
 // ใช้การ Debounce เพื่อป้องกันการอ่านปุ่มซ้ำจากการเด้งของสัญญาณ
 
 // --------------------- การกำหนดขา ---------------------
-// ขา PWM สำหรับควบคุม R, G, B ของ LED RGB
-#define LED_R 9
-#define LED_G 10
-#define LED_B 11
-// ปุ่มกดต่อเข้าขา 7
-#define BTN    7
+// RGB LED
+const int LED_R = D1;
+const int LED_G = D2;
+const int LED_B = D7;
+const bool COMMON_ANODE = false;
 
 // --------------------- ชนิดของ LED ---------------------
 // กำหนดชนิดของ LED RGB

@@ -1,5 +1,4 @@
 /***** SmartHome: Ultrasonic + Blynk + Servo + Timer + ISR + Watchdog (ESP8266) *****/
-#include <Arduino.h>
 #include <Ticker.h>
 #include <Servo.h>
 
@@ -15,7 +14,7 @@ char ssid[] = "iPhone k";
 char pass[] = "Khim.2005";
 
 // ---------- Ultrasonic pins ----------
-const int TRIG_PIN = 14;   // D5 → TRIG
+const int TRIG_PIN = 16;   // D0 → TRIG
 const int ECHO_PIN = 12;   // D6 → ECHO (ผ่านตัวแบ่ง 5V->3.3V)
 
 // ---------- Servo pin ----------
