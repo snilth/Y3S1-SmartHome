@@ -1,110 +1,143 @@
 #include <Servo.h>
 
-// ===== Pins =====
-#define LED2       3
-#define BTN        7    // ปุ่มต่อกับ GND (ใช้ INPUT_PULLUP)
-#define PIR        6    // เซ็นเซอร์ตรวจจับการเคลื่อนไหว
-#define WATER_PIN  A0   // ขา Analog ของ Water/Rain/Leak Sensor
-#define SERVO_PIN  9    // ขา PWM ของ Servo (เช่น SG90)
+/*** ===== Configs ===== ***/
+#define USE_BUTTON 0
 
-// ===== Button (toggle LED2) =====
+// PIR: false = active-LOW (ที่คุณทดสอบได้), true = active-HIGH
+const bool PIR_ACTIVE_HIGH = false;
+
+// LED2 ค้างหลังเจอ motion (ms)
+const unsigned long LED2_HOLD_MS = 5000;
+
+/*** ตัวกรอง PIR ***/
+const unsigned long REQ_ACTIVE_MS = 120;
+const unsigned long REQ_IDLE_MS   = 200;
+const unsigned long COOLDOWN_MS   = 500;
+
+/*** ===== Pins ===== ***/
+#define LED2       3
+#define BTN        7
+#define PIR        6
+#define WATER_PIN  A0
+#define SERVO_PIN  9
+
+/*** ===== Button (toggle LED2) ===== ***/
+#if USE_BUTTON
 bool ledOn = false;
 unsigned long lastDebounceTime = 0;
 const unsigned long DEBOUNCE_MS = 50;
-int lastReading = HIGH;     // ปล่อยปุ่ม = HIGH
+int lastReading = HIGH;
 int stableState = HIGH;
+#endif
 
-// ===== PIR (auto LED2) =====
-const unsigned long LED2_HOLD_MS = 5000;
+/*** ===== PIR (auto LED2) ===== ***/
 unsigned long lastMotionMs = 0;
 bool pirLedOn = false;
 
-// ===== Water Sensor → Servo (90° และกลับหลัง 2 วิ) =====
-const int WET_TRIG = 600;   // ปรับตามคาลิเบรต (0..1023) — ค่ามากกว่า = เปียก
-const int DRY_TRIG = 500;   // ต้องต่ำกว่า WET_TRIG เพื่อทำฮิสเทอรีซิส
-const int DRY_POS  = 0;     // มุมปกติ
-const int WET_POS  = 90;    // มุมเมื่อเจอน้ำ
+// FSM กรองสัญญาณ PIR
+enum PirFSM { P_IDLE, P_QUALIFY_ACTIVE, P_TRIGGERED, P_QUALIFY_IDLE };
+PirFSM pstate = P_IDLE;
+unsigned long pMark = 0, lastTrigger = 0;
 
-// กรองสัญญาณเพื่อลดสั่น (EMA)
+/*** ===== Water Sensor → Servo (WET=90° / DRY=0°) ===== ***/
+const int WET_TRIG = 600;   // >= เปียก
+const int DRY_TRIG = 500;   // <= แห้ง (ต่ำกว่า WET_TRIG เพื่อทำฮิสเทอรีซิส)
+const int DRY_POS  = 0;
+const int WET_POS  = 90;
+
+// EMA ลดสั่น
 int waterEMA = 0;
-const uint8_t EMA_ALPHA = 32; // 0..255 (32≈0.125)
+const uint8_t EMA_ALPHA = 32;
 
-// สเตตเครื่องสำหรับทริกเกอร์ครั้งละ 1 หน
-enum ServoState { DRY_READY, WET_HOLD, WAIT_DRY };
-ServoState servoState = DRY_READY;
-unsigned long wetStartMs = 0;
+// เก็บสถานะเปียก/แห้งปัจจุบัน
+bool isWet = false;
 
 Servo valve;
-int  servoNow = DRY_POS;
 
 void setup() {
   pinMode(LED2, OUTPUT);
+#if USE_BUTTON
   pinMode(BTN, INPUT_PULLUP);
-  pinMode(PIR, INPUT);
+#endif
+  if (PIR_ACTIVE_HIGH) pinMode(PIR, INPUT);
+  else                 pinMode(PIR, INPUT_PULLUP);
+
   digitalWrite(LED2, LOW);
 
   valve.attach(SERVO_PIN);
-  valve.write(DRY_POS);
-  servoNow = DRY_POS;
+  valve.write(DRY_POS);  // เริ่มที่ 0°
+  isWet = false;
 
-  waterEMA = analogRead(WATER_PIN); // ตั้งต้น EMA
+  waterEMA = analogRead(WATER_PIN);
 }
 
 void loop() {
   unsigned long now = millis();
 
-  // ===== ปุ่ม + debounce (toggle LED2) =====
+  /*** ===== Button (optional) ===== ***/
+#if USE_BUTTON
   int reading = digitalRead(BTN);
   if (reading != lastReading) lastDebounceTime = now;
   if ((now - lastDebounceTime) > DEBOUNCE_MS) {
     if (reading != stableState) {
       stableState = reading;
-      if (stableState == LOW) {
-        ledOn = !ledOn;  // toggle
-      }
+      if (stableState == LOW) ledOn = !ledOn;
     }
   }
   lastReading = reading;
+#endif
 
-  // ===== PIR → คุม LED2 (ถ้าไม่ได้เปิดด้วยปุ่ม) =====
-  int pirState = digitalRead(PIR);
-  if (pirState == HIGH) { pirLedOn = true; lastMotionMs = now; }
-  else if (pirLedOn && (now - lastMotionMs >= LED2_HOLD_MS)) { pirLedOn = false; }
+  /*** ===== PIR: filtered edge detection ===== ***/
+  int pirRaw = digitalRead(PIR);
+  bool motionLow  = (!PIR_ACTIVE_HIGH) && (pirRaw == LOW);
+  bool motionHigh = (PIR_ACTIVE_HIGH)  && (pirRaw == HIGH);
+  bool motionNow  = motionLow || motionHigh;
 
-  if (ledOn) digitalWrite(LED2, HIGH);
-  else       digitalWrite(LED2, pirLedOn ? HIGH : LOW);
-
-  // ===== Water Sensor (Analog) → Servo 90° แล้วกลับหลัง 2 วิ =====
-  int waterRaw = analogRead(WATER_PIN);
-  waterEMA += ((int32_t)EMA_ALPHA * (waterRaw - waterEMA)) >> 8;
-
-  switch (servoState) {
-    case DRY_READY:
-      // รอเหตุการณ์ "ขึ้น" (จากแห้ง → เปียก)
-      if (waterEMA >= WET_TRIG) {
-        valve.write(WET_POS);       // หมุนไป 90°
-        servoNow = WET_POS;
-        wetStartMs = now;           // เริ่มจับเวลา 2 วินาที
-        servoState = WET_HOLD;
+  switch (pstate) {
+    case P_IDLE:
+      if (now - lastTrigger >= COOLDOWN_MS) {
+        if (motionNow) { pstate = P_QUALIFY_ACTIVE; pMark = now; }
       }
       break;
-
-    case WET_HOLD:
-      // ค้างไว้ 2 วินาทีแล้วหมุนกลับ
-      if (now - wetStartMs >= 2000UL) {
-        valve.write(DRY_POS);       // กลับตำแหน่งปกติ
-        servoNow = DRY_POS;
-        servoState = WAIT_DRY;      // รอให้ค่ากลับไป "แห้ง" ก่อนค่อยพร้อมทริกใหม่
+    case P_QUALIFY_ACTIVE:
+      if (!motionNow) { pstate = P_IDLE; }
+      else if (now - pMark >= REQ_ACTIVE_MS) {
+        lastTrigger = now;
+        lastMotionMs = now;
+        pirLedOn = true;
+        pstate = P_TRIGGERED;
       }
       break;
-
-    case WAIT_DRY:
-      // ป้องกันทริกซ้ำตอนที่ยังเปียกค้าง → ต้องต่ำกว่า DRY_TRIG ก่อน
-      if (waterEMA <= DRY_TRIG) {
-        servoState = DRY_READY;
-      }
+    case P_TRIGGERED:
+      if (pirLedOn && (now - lastMotionMs >= LED2_HOLD_MS)) pirLedOn = false;
+      if (now - lastTrigger >= COOLDOWN_MS) { pstate = P_QUALIFY_IDLE; pMark = now; }
+      break;
+    case P_QUALIFY_IDLE:
+      if (motionNow) { lastTrigger = now; pstate = P_TRIGGERED; }
+      else if (now - pMark >= REQ_IDLE_MS) { pstate = P_IDLE; }
       break;
   }
 
-  // (ออปชัน) delay(2);
+  /*** ===== คุม LED2 ===== ***/
+#if USE_BUTTON
+  if (ledOn) digitalWrite(LED2, HIGH);
+  else       digitalWrite(LED2, pirLedOn ? HIGH : LOW);
+#else
+  digitalWrite(LED2, pirLedOn ? HIGH : LOW);
+#endif
+
+  /*** ===== Water Sensor → Servo (ฮิสเทอรีซิส: WET stays 90°, DRY stays 0°) ===== ***/
+  int waterRaw = analogRead(WATER_PIN);
+  waterEMA += ((int32_t)EMA_ALPHA * (waterRaw - waterEMA)) >> 8;
+
+  // เปลี่ยนสถานะเฉพาะเมื่อ "ข้าม" ธรช. ฮิสเทอรีซิส เพื่อลดการกระพือของเซอร์โว
+  if (!isWet && waterEMA >= WET_TRIG) {
+    isWet = true;
+    valve.write(WET_POS);    // ไป 90°
+  } else if (isWet && waterEMA <= DRY_TRIG) {
+    isWet = false;
+    valve.write(DRY_POS);    // กลับ 0°
+  }
+
+  // (ออปชัน) delay(1);
 }
