@@ -1,0 +1,13 @@
+[Unit]
+Description=Capture snapshot when Arduino sends WRONG_PASS
+After=network.target motioneye.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/odroid/capture_on_wrong_pass.py
+User=odroid
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

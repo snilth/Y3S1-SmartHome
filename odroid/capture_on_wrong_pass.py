@@ -1,37 +1,60 @@
-import serial          # For communicating with Arduino via serial port
-import subprocess      # To run shell commands like wget
-from datetime import datetime  # For working with dates and timestamps
-import os              # For file and folder operations
+import os
+import serial
+import subprocess
+from datetime import datetime
 
 # -------------------------
-# Set up the serial port to communicate with Arduino
-# '/dev/ttyACM0' → USB port where Arduino is connected
-# 9600 → baud rate (must match Arduino's setting)
-# timeout=1 → waits 1 second for data; prevents blocking indefinitely
-ser = serial.Serial('/dev/ttyACM0', 9600, timeout=1)
+# Configurations
+SERIAL_PORT = "/dev/ttyACM0"       # Arduino USB serial port
+BAUD_RATE = 9600                   # Must match Arduino setting
+CAMERA_ID = 2                      # Camera2
+MEDIA_PATH = "/var/lib/motioneye/Camera2"
+CAMERA_URL = f"http://localhost:8765/picture/{CAMERA_ID}/current/"
 
 # -------------------------
-# Set the folder to save snapshots
-# MotionEye will save snapshots from Camera2 to this folder
-capture_folder = "/var/lib/motioneye/Camera2"
-# Create the folder if it doesn't exist
-os.makedirs(capture_folder, exist_ok=True)
+def ensure_folder(path: str):
+    # Folder permission ตั้งแล้วในระบบ, ไม่ต้อง chmod
+    os.makedirs(path, exist_ok=True)
+
+def generate_filename() -> str:
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"{MEDIA_PATH}/failed_{ts}.jpg"
+
+def capture_snapshot(filename: str):
+    # ดาวน์โหลด snapshot จาก MotionEye
+    subprocess.run(["wget", "-q", "-O", filename, CAMERA_URL])
+    # ให้ MotionEye อ่านได้
+    os.chmod(filename, 0o664)
+    print(f"[OK] Snapshot saved: {filename}")
 
 # -------------------------
-# Continuously read data from Arduino
-while True:
-    line = ser.readline().decode().strip()  # Read a line from Serial, decode to string, strip whitespace
-    if line == "WRONG_PASS":                # Check if Arduino sent "WRONG_PASS"
-        # ---------------------
-        # Generate a filename with a timestamp to avoid overwriting
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{capture_folder}/failed_{ts}.jpg"
+def main():
+    ensure_folder(MEDIA_PATH)
 
-        # ---------------------
-        # Call the MotionEye API to capture a snapshot from Camera2
-        # Use wget to download the image and save it to the filename
-        subprocess.run([
-            "wget", "-q", "-O", filename,
-            "http://localhost:8765/picture/2/current/"
-        ])
-        print(f"Captured snapshot {filename}")  # Print confirmation that the snapshot was saved
+    # เปิด Serial port
+    try:
+        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
+    except serial.SerialException as e:
+        print(f"[ERROR] Cannot open serial port {SERIAL_PORT}: {e}")
+        return
+
+    print("[INFO] Waiting for WRONG_PASS from Arduino...")
+
+    while True:
+        try:
+            line = ser.readline().decode(errors="ignore").strip()
+        except Exception as e:
+            print(f"[WARN] Serial read error: {e}")
+            continue
+
+        if line == "WRONG_PASS":
+            print("[DEBUG] Received: WRONG_PASS")
+            filename = generate_filename()
+            try:
+                capture_snapshot(filename)
+            except Exception as e:
+                print(f"[WARN] Failed to capture snapshot: {e}")
+
+# -------------------------
+if __name__ == "__main__":
+    main()
